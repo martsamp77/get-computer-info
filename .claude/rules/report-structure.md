@@ -21,6 +21,31 @@ intent of each section, translating the probes to native tooling.
 - Wrap every command/file output in a fenced code block, after redaction.
 - Degrade gracefully: a missing tool prints a short note, never aborts the run.
 
+## Interactive wizard & output modes (all platforms)
+
+Every platform script behaves the same way at the CLI:
+
+- **No flags on an interactive terminal → wizard.** Prompt for: destination
+  (screen / current dir / home / custom path), format (`md` default / `txt` /
+  `html`), scope (full default / quick), and "mask network identifiers?" — then a
+  confirm step, and an offer to copy to the clipboard when done.
+- **Non-interactive → never block.** When stdin/stdout is not a TTY (pipe, cron,
+  `ssh host 'bash -s'`, `curl | bash`) or `--no-wizard` is given, fall back to the
+  defaults (print Markdown to stdout) without prompting. Read wizard input from
+  the controlling terminal, not stdin.
+- **Scriptable flags bypass the wizard:** `--screen`, `--output <dir>`, `--home`,
+  `--format <md|txt|html>`, `--quick`/`--full`, `--mask-net`, `--no-wizard`
+  (PowerShell uses the `-Param` equivalents).
+- **Formats:** `md` = the report as-is; `txt` = Markdown stripped to plain text;
+  `html` = via pandoc if present, else a minimal escaped wrapper.
+- **Quick scope** skips only the heaviest sections (full installed-package list,
+  filesystem map, largest-dirs scan) and notes that it did; everything else stays.
+- **Mask-net** masks IPs/MACs/hostname for a shareable report and names the file
+  `masked_context_<timestamp>.<ext>` (no hostname). It is *additive* — it never
+  replaces the core secret redaction.
+- Implementation note: generate the whole report to a temp buffer/file, then apply
+  masking + format and route to the destination (avoids partial-write races).
+
 ## Sections (in order)
 
 1. **System & OS** — metadata, OS release/version, kernel/build, arch, platform

@@ -10,10 +10,21 @@
 #
 # USAGE:
 #   chmod +x server-audit.sh
-#   ./server-audit.sh                     # print Markdown report to stdout
+#   ./server-audit.sh                     # interactive wizard (asks where + format)
 #   sudo ./server-audit.sh                # run as root for complete coverage
-#   sudo ./server-audit.sh --output .     # also save <hostname>_context_<ts>.md
 #   ./server-audit.sh --help
+#
+#   Scriptable flags (any of these skip the wizard):
+#     --screen | --stdout         print the report to the terminal
+#     --output <dir> | -o <dir>   save into a directory
+#     --home                      save into your home directory
+#     --format <md|txt|html>      output format (default: md)
+#     --quick                     skip the heaviest sections (faster, smaller)
+#     --mask-net                  mask IPs/MACs/hostname (shareable report)
+#     --no-wizard                 use defaults (screen, md, full) without prompting
+#   Saved file is named <hostname>_context_<timestamp>.<ext>.
+#   With no flags on an interactive terminal, the wizard runs; piped/cron/ssh
+#   runs fall back to printing Markdown to stdout (never blocks on a prompt).
 #
 # SECURITY GUARANTEES (defense in depth — never leak secrets):
 #   1. Sensitive paths (.ssh, .env, .aws, .pgpass, /etc/shadow, private keys,
@@ -38,48 +49,44 @@
 
 set -uo pipefail
 
-VERSION="2.0"
-OUTPUT_DIR=""
+VERSION="2.1"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 HOSTNAME_SHORT=$(hostname 2>/dev/null || echo "unknown")
+
+# --- Output options (set by flags or the interactive wizard) ----------------
+DEST=""           # screen | dir | home | custom  (empty until decided)
+DEST_PATH=""      # directory or full file path for dir/custom
+FORMAT="md"       # md | txt | html
+SCOPE="full"      # full | quick
+MASK_NET=""       # non-empty = mask IPs/MACs/hostname
+NO_WIZARD=""
+EXPLICIT=""       # non-empty if any output-affecting flag was given
 
 # --- Parse arguments --------------------------------------------------------
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --output|-o)
-            OUTPUT_DIR="${2:-}"
-            [ -z "$OUTPUT_DIR" ] && { echo "Error: --output needs a directory" >&2; exit 1; }
-            shift 2
-            ;;
+            DEST="dir"; DEST_PATH="${2:-}"; EXPLICIT=1
+            [ -z "$DEST_PATH" ] && { echo "Error: --output needs a directory" >&2; exit 1; }
+            shift 2 ;;
+        --home)            DEST="home";   EXPLICIT=1; shift ;;
+        --screen|--stdout) DEST="screen"; EXPLICIT=1; shift ;;
+        --format|-f)
+            FORMAT="${2:-}"; EXPLICIT=1
+            case "$FORMAT" in md|txt|html) ;; *) echo "Error: --format must be md, txt, or html" >&2; exit 1 ;; esac
+            shift 2 ;;
+        --quick)     SCOPE="quick"; EXPLICIT=1; shift ;;
+        --full)      SCOPE="full";  EXPLICIT=1; shift ;;
+        --mask-net)  MASK_NET=1;    EXPLICIT=1; shift ;;
+        --no-wizard) NO_WIZARD=1;   shift ;;
         --help|-h)
-            sed -n '2,40p' "$0" | sed 's/^# \?//'
-            exit 0
-            ;;
+            awk '/^# ={10,}/{b++; next} b==1{l=$0; sub(/^# ?/,"",l); print l} b>=2{exit}' "$0"
+            exit 0 ;;
         *)
             echo "Unknown option: $1 (try --help)" >&2
-            exit 1
-            ;;
+            exit 1 ;;
     esac
 done
-
-# --- Output handling --------------------------------------------------------
-REPORT_FILE=""
-TEE_PID=""
-if [ -n "$OUTPUT_DIR" ]; then
-    mkdir -p "$OUTPUT_DIR" || { echo "Error: cannot create $OUTPUT_DIR" >&2; exit 1; }
-    REPORT_FILE="${OUTPUT_DIR%/}/${HOSTNAME_SHORT}_context_${TIMESTAMP}.md"
-    exec > >(tee "$REPORT_FILE")
-    TEE_PID=$!
-fi
-
-# Flush and wait for the tee process substitution so the saved file is complete.
-finish() {
-    if [ -n "$TEE_PID" ]; then
-        exec 1>&-
-        wait "$TEE_PID" 2>/dev/null
-    fi
-}
-trap finish EXIT
 
 # ============================================================================
 # Helpers
@@ -176,6 +183,119 @@ detect_service() { # display proc port
         local IFS=", "; printf -- '- **%s**: %s\n' "$display" "${parts[*]}"
     fi
 }
+
+# ============================================================================
+# Output: format transforms, masking, clipboard, interactive wizard
+# ============================================================================
+
+# Strip Markdown down to readable-ish plain text.
+to_plain() {
+    sed -E -e '/^```/d' -e 's/^#{1,6} //' -e 's/\*\*//g' -e 's/`//g' -e 's/^> //'
+}
+
+# Render Markdown as HTML (pandoc if present, else an escaped <pre> wrapper).
+to_html() {
+    if have pandoc; then
+        pandoc -f markdown -t html -s 2>/dev/null
+    else
+        printf '<!DOCTYPE html>\n<html><head><meta charset="utf-8"><title>%s context</title></head>\n<body><pre>\n' "$HOSTNAME_SHORT"
+        sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'
+        printf '</pre></body></html>\n'
+    fi
+}
+
+# Mask network identifiers (IPv4, MAC, common IPv6, hostname/FQDN) for sharing.
+mask_net() {
+    local fqdn; fqdn="$(hostname -f 2>/dev/null)"
+    sed -E \
+        -e 's/([0-9]{1,3}\.){3}[0-9]{1,3}/***.***.***.***/g' \
+        -e 's/([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}/**:**:**:**:**:**/g' \
+        -e 's/([0-9a-fA-F]{0,4}:){2,}[0-9a-fA-F]{0,4}::?[0-9a-fA-F:]*/***IPv6***/g' \
+    | sed -e "s/${fqdn:-__no_fqdn__}/***HOST***/g" -e "s/${HOSTNAME_SHORT}/***HOST***/g"
+}
+
+# Copy text to the system clipboard via the first available tool.
+clip_copy() {
+    if   have pbcopy;  then pbcopy
+    elif have wl-copy; then wl-copy
+    elif have xclip;   then xclip -selection clipboard
+    elif have xsel;    then xsel -b
+    elif have clip.exe; then clip.exe
+    else return 1; fi
+}
+
+# Interactive setup — only reached on a TTY with no output flags. Reads /dev/tty.
+wizard() {
+    printf '\n=== server-audit.sh — interactive setup ===\n' >&2
+    if ! is_root; then
+        printf '\n⚠  Not running as root: DIMM, SMART, firewall and the full process list will be limited.\n' >&2
+        local cont; read -r -p "Continue anyway? [Y/n] " cont </dev/tty || cont=""
+        case "$cont" in [Nn]*) printf 'Aborted. Re-run with sudo for full coverage:\n  sudo %s\n' "$0" >&2; exit 0 ;; esac
+    fi
+
+    local d
+    printf '\nWhere should the report go?\n  1) Screen (print here)\n  2) This directory (%s)\n  3) Home directory (%s)\n  4) Custom path...\n' "$(pwd)" "$HOME" >&2
+    read -r -p "Choose [1-4, default 1]: " d </dev/tty || d=""
+    case "$d" in
+        2) DEST="dir"; DEST_PATH="$(pwd)" ;;
+        3) DEST="home" ;;
+        4) DEST="custom"; read -r -p "Enter a directory or a full file path: " DEST_PATH </dev/tty || DEST_PATH="" ;;
+        *) DEST="screen" ;;
+    esac
+
+    if [ "$DEST" != "screen" ]; then
+        local f
+        printf '\nFormat?\n  1) Markdown .md (default)\n  2) Plain text .txt\n  3) HTML .html\n' >&2
+        read -r -p "Choose [1-3, default 1]: " f </dev/tty || f=""
+        case "$f" in 2) FORMAT="txt" ;; 3) FORMAT="html" ;; *) FORMAT="md" ;; esac
+    fi
+
+    local s
+    printf '\nScope?\n  1) Full — everything (default)\n  2) Quick — skip the heaviest sections\n' >&2
+    read -r -p "Choose [1-2, default 1]: " s </dev/tty || s=""
+    case "$s" in 2) SCOPE="quick" ;; *) SCOPE="full" ;; esac
+
+    local m
+    read -r -p $'\nWill you share/publish this report? Mask IPs/MACs/hostname? [y/N] ' m </dev/tty || m=""
+    case "$m" in [Yy]*) MASK_NET=1 ;; esac
+
+    printf '\nSummary: destination=%s%s, format=%s, scope=%s, mask-net=%s\n' \
+        "$DEST" "$([ -n "$DEST_PATH" ] && printf ' (%s)' "$DEST_PATH")" \
+        "$FORMAT" "$SCOPE" "$([ -n "$MASK_NET" ] && echo yes || echo no)" >&2
+    local ok; read -r -p "Proceed? [Y/n] " ok </dev/tty || ok=""
+    case "$ok" in [Nn]*) printf 'Aborted.\n' >&2; exit 0 ;; esac
+}
+
+# --- Decide output mode -----------------------------------------------------
+if [ -z "$EXPLICIT" ] && [ -z "$NO_WIZARD" ] && [ -t 0 ] && [ -t 1 ]; then
+    wizard
+fi
+[ -z "$DEST" ] && DEST="screen"
+QUICK=""; [ "$SCOPE" = "quick" ] && QUICK=1
+
+# Resolve the destination file path (for non-screen modes).
+OUT_FILE=""
+if [ "$DEST" != "screen" ]; then
+    base="${HOSTNAME_SHORT}_context_${TIMESTAMP}"
+    [ -n "$MASK_NET" ] && base="masked_context_${TIMESTAMP}"
+    case "$DEST" in
+        dir)  OUT_FILE="${DEST_PATH%/}/${base}.${FORMAT}" ;;
+        home) OUT_FILE="${HOME%/}/${base}.${FORMAT}" ;;
+        custom)
+            if [ ! -d "$DEST_PATH" ] && printf '%s' "$DEST_PATH" | grep -qE '\.[A-Za-z0-9]+$'; then
+                OUT_FILE="$DEST_PATH"
+            else
+                OUT_FILE="${DEST_PATH%/}/${base}.${FORMAT}"
+            fi ;;
+    esac
+    mkdir -p "$(dirname "$OUT_FILE")" 2>/dev/null || { echo "Error: cannot create output directory for $OUT_FILE" >&2; exit 1; }
+fi
+
+# Generate the whole report into a temp file, then deliver it (see end of script).
+TMP="$(mktemp "${TMPDIR:-/tmp}/server-audit.XXXXXX")" || { echo "Error: mktemp failed" >&2; exit 1; }
+trap 'rm -f "$TMP"' EXIT
+exec 3>&1        # save the real stdout on fd 3
+exec >"$TMP"     # the report body below writes into the temp file
 
 # ============================================================================
 # Report header
@@ -325,15 +445,19 @@ else
 fi
 
 h3 "Filesystem map (names only, sensitive dirs pruned)"
-for d in / /opt /srv /var/www /usr/local; do
-    [ -d "$d" ] || continue
-    printf '**%s**\n\n' "$d"
-    if have tree; then
-        tree -L 2 -a -I '.ssh|.gnupg|.aws|.env|.kube|node_modules' "$d" 2>/dev/null | head -200 | block
-    else
-        to 15 find "$d" -maxdepth 2 \( -name .ssh -o -name .gnupg -o -name .aws \) -prune -o -print 2>/dev/null | head -200 | block
-    fi
-done
+if [ -z "$QUICK" ]; then
+    for d in / /opt /srv /var/www /usr/local; do
+        [ -d "$d" ] || continue
+        printf '**%s**\n\n' "$d"
+        if have tree; then
+            tree -L 2 -a -I '.ssh|.gnupg|.aws|.env|.kube|node_modules' "$d" 2>/dev/null | head -200 | block
+        else
+            to 15 find "$d" -maxdepth 2 \( -name .ssh -o -name .gnupg -o -name .aws \) -prune -o -print 2>/dev/null | head -200 | block
+        fi
+    done
+else
+    note "Skipped in quick mode."
+fi
 
 h3 "Home directories (top-level names only)"
 for h in /home/* /root; do
@@ -343,7 +467,11 @@ for h in /home/* /root; do
 done
 
 h3 "Largest top-level directories"
-to 30 du -xhd1 / 2>/dev/null | sort -rh | head -15 | block
+if [ -z "$QUICK" ]; then
+    to 30 du -xhd1 / 2>/dev/null | sort -rh | head -15 | block
+else
+    note "Skipped in quick mode."
+fi
 
 # ============================================================================
 h1 "5. Network"
@@ -448,17 +576,17 @@ h3 "Package manager & installed packages"
 if have dpkg; then
     kv "Manager" "dpkg/apt"
     kv "Installed count" "$(dpkg -l 2>/dev/null | grep -c '^ii')"
-    h3 "Installed (dpkg)"; dpkg -l 2>/dev/null | awk '/^ii/{print $2" "$3}' | block
+    if [ -z "$QUICK" ]; then h3 "Installed (dpkg)"; dpkg -l 2>/dev/null | awk '/^ii/{print $2" "$3}' | block; else note "Full package list skipped in quick mode."; fi
 elif have rpm; then
     kv "Manager" "rpm"
     kv "Installed count" "$(rpm -qa 2>/dev/null | wc -l)"
-    h3 "Installed (rpm)"; rpm -qa 2>/dev/null | sort | block
+    if [ -z "$QUICK" ]; then h3 "Installed (rpm)"; rpm -qa 2>/dev/null | sort | block; else note "Full package list skipped in quick mode."; fi
 elif have apk; then
     kv "Manager" "apk"
-    h3 "Installed (apk)"; apk info -v 2>/dev/null | sort | block
+    if [ -z "$QUICK" ]; then h3 "Installed (apk)"; apk info -v 2>/dev/null | sort | block; else note "Full package list skipped in quick mode."; fi
 elif have pacman; then
     kv "Manager" "pacman"
-    h3 "Installed (pacman)"; pacman -Q 2>/dev/null | block
+    if [ -z "$QUICK" ]; then h3 "Installed (pacman)"; pacman -Q 2>/dev/null | block; else note "Full package list skipped in quick mode."; fi
 fi
 
 h3 "Snap / Flatpak"
@@ -669,6 +797,34 @@ echo "| Failed units | $(systemctl list-units --state=failed --no-legend --no-pa
 
 printf '\n---\n_Audit complete: %s_\n' "$(date '+%Y-%m-%d %H:%M:%S %Z')"
 
-if [ -n "$REPORT_FILE" ]; then
-    printf '\n_Report saved to: %s_\n' "$REPORT_FILE" >&2
+# ============================================================================
+# Deliver the report (restore stdout, apply masking + format, route it)
+# ============================================================================
+exec 1>&3 3>&-   # restore the real stdout
+
+render() {
+    { if [ -n "$MASK_NET" ]; then mask_net < "$TMP"; else cat "$TMP"; fi; } \
+        | case "$FORMAT" in
+              txt)  to_plain ;;
+              html) to_html ;;
+              *)    cat ;;
+          esac
+}
+
+FINAL="$(render)"
+
+if [ "$DEST" = "screen" ]; then
+    printf '%s\n' "$FINAL"
+else
+    printf '%s\n' "$FINAL" > "$OUT_FILE" || { echo "Error: cannot write $OUT_FILE" >&2; exit 1; }
+    printf '\n✓ Report saved: %s\n' "$OUT_FILE" >&2
+    printf '  Hand this file to your AI assistant — attach it or paste its contents.\n' >&2
+fi
+
+# Offer to copy to the clipboard when interactive and a tool is available.
+if [ -t 0 ] && [ -t 1 ] && { have pbcopy || have wl-copy || have xclip || have xsel || have clip.exe; }; then
+    read -r -p "Copy report to clipboard? [y/N] " cc </dev/tty 2>/dev/null || cc=""
+    case "$cc" in
+        [Yy]*) if printf '%s' "$FINAL" | clip_copy; then printf 'Copied to clipboard.\n' >&2; else printf 'Clipboard copy failed.\n' >&2; fi ;;
+    esac
 fi

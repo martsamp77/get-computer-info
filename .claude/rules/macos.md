@@ -65,6 +65,16 @@ test them.
 `~/Library/Application Support/*/*` credential files — plus everything in
 `security.md`.
 
+## Interactive wizard
+
+Port the same wizard/output modes as the Linux script (see the "Interactive
+wizard & output modes" section of `report-structure.md`): destinations
+(screen/CWD/home/custom), formats (`md`/`txt`/`html` — HTML via pandoc with the
+escaped-`<pre>` fallback), quick/full scope, mask-net, and the same flags. macOS
+specifics: clipboard via **`pbcopy`**; prompts read from `/dev/tty`; the wizard
+runs only when interactive and no flags are passed (bash 3.2 supports `[ -t 0 ]`
+and `read -p` fine).
+
 ## Lint & test
 
 - Lint with `shellcheck --severity=warning server-audit-macos.sh` (the existing

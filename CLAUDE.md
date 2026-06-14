@@ -30,7 +30,8 @@ Read-only diagnostic scripts that map a machine — OS, users/groups, filesystem
 - **Never leak secrets.** (1) Sensitive paths are reported existence-only, never read. (2) Everything read is piped through a redactor (passwords/tokens/keys/credential-URLs/PEM blocks/serials). (3) No credentialed access — detect services by port+process+version only; environment variables by **name only**, never values.
 - **Read-only.** Safe on production — no writes/installs/restarts/state changes (sole exception: writing the report file).
 - **Degrade gracefully.** Guard every external tool; a missing tool prints a note, never aborts the run.
-- **Keep network identifiers.** IPs, MACs, hostname are intentionally included for context (the report is sensitive — don't publish it; generated `*_context_*.md` are gitignored).
+- **Keep network identifiers.** IPs, MACs, hostname are intentionally included for context (the report is sensitive — don't publish it; generated `*_context_*.md` are gitignored). A `--mask-net` mode / wizard option masks them for a shareable report.
+- **Interactive wizard, non-blocking.** With no flags on a TTY, the script runs a wizard (destination/format/scope/mask/clipboard); piped/cron/SSH runs and `--no-wizard` must fall back to defaults without ever blocking on a prompt. Details in `report-structure.md`.
 
 ## Linting
 

@@ -50,22 +50,39 @@ Three independent layers, so a miss in one is caught by another:
 ```bash
 chmod +x server-audit.sh
 
-./server-audit.sh                    # print the Markdown report to stdout
-sudo ./server-audit.sh               # run as root for complete coverage
-sudo ./server-audit.sh --output .    # also save <hostname>_context_<timestamp>.md
+sudo ./server-audit.sh               # interactive wizard (where + format), root = full coverage
 ./server-audit.sh --help
 ```
+
+Run with no flags on a terminal and a short **wizard** asks where the report
+should go (screen / current dir / home / a custom path), the format, scope, and
+whether to mask network identifiers. Run as root for complete coverage.
+
+Prefer flags? They skip the wizard and are safe in scripts/cron/SSH:
+
+```bash
+sudo ./server-audit.sh --output .            # save <hostname>_context_<ts>.md here
+sudo ./server-audit.sh --home --format html  # save an .html report to ~
+./server-audit.sh --screen --quick           # quick run, print to terminal
+./server-audit.sh --mask-net --output .      # shareable: mask IPs/MACs/hostname
+./server-audit.sh --no-wizard                # defaults, no prompts
+```
+
+| Flag | Effect |
+|------|--------|
+| `--screen` / `--stdout` | print to terminal |
+| `--output <dir>` / `-o` | save into a directory |
+| `--home` | save into your home directory |
+| `--format <md\|txt\|html>` / `-f` | output format (default `md`) |
+| `--quick` / `--full` | skip the heaviest sections / everything (default) |
+| `--mask-net` | mask IPs/MACs/hostname (shareable report) |
+| `--no-wizard` | use defaults without prompting |
 
 Runs without root (coverage degrades for things like DIMM details, SMART
 health, firewall rules, and the full process list). Works on most distros
 (Ubuntu/Debian primarily) and degrades gracefully when tools are missing.
-
-To hand the result to an AI assistant, save it and open/attach the file:
-
-```bash
-sudo ./server-audit.sh --output .
-# -> ./<hostname>_context_<timestamp>.md
-```
+When piped, redirected, or run over SSH it never prompts — it just prints the
+Markdown report. When finished it offers to copy the report to your clipboard.
 
 ### macOS — 🚧 planned
 

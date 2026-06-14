@@ -70,6 +70,18 @@ Vault (never enumerate values), SAM & SECURITY registry hives, `%USERPROFILE%\.s
 stores, `*.kdbx` — plus everything in `security.md`. Never print registry values
 that could be secrets; run them through `Redact`.
 
+## Interactive wizard
+
+Port the same wizard/output modes as the Linux script (see "Interactive wizard &
+output modes" in `report-structure.md`): destinations (screen/CWD/home/custom),
+formats (`md`/`txt`/`html` — HTML via pandoc with an escaped-`<pre>` fallback),
+quick/full scope, mask-net, confirm + clipboard offer. Windows specifics: use
+`-Param` switches (`-Output`, `-Format`, `-Quick`, `-MaskNet`, `-NoWizard`,
+`-Screen`) parsed via `param(...)`; clipboard via **`Set-Clipboard`**; gate the
+wizard on `[Environment]::UserInteractive` plus "no output params passed", and
+read answers with `Read-Host`. Build the report into a `[System.Text.StringBuilder]`
+or temp file, then mask/format/route.
+
 ## Lint & test
 
 - Lint with **PSScriptAnalyzer**: `Invoke-ScriptAnalyzer -Path server-audit.ps1
