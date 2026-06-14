@@ -1,0 +1,55 @@
+# ---------------------------------------------------------------------------
+# Generated context reports — NEVER COMMIT THESE.
+# They contain hostnames, IPs, and full software inventory for a real machine.
+# (Secrets are redacted, but the report is still sensitive.)
+# ---------------------------------------------------------------------------
+*_context_*.md
+*_context_*.txt
+*_audit_*.txt
+*_summary_*.txt
+*_audit_*.md
+reports/
+output/
+
+# ---------------------------------------------------------------------------
+# Local / personal Claude Code config (keep team config: .claude/settings.json)
+# ---------------------------------------------------------------------------
+CLAUDE.local.md
+.claude/settings.local.json
+
+# ---------------------------------------------------------------------------
+# Red-team / test decoy artifacts (planted credential files, scratch dirs)
+# ---------------------------------------------------------------------------
+*.decoy
+test-output/
+tmp/
+
+# ---------------------------------------------------------------------------
+# OS cruft
+# ---------------------------------------------------------------------------
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.lnk
+
+# ---------------------------------------------------------------------------
+# Editors / IDEs
+# ---------------------------------------------------------------------------
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ---------------------------------------------------------------------------
+# Windows PowerShell variant (when added) — local module/build artifacts
+# ---------------------------------------------------------------------------
+*.ps1xml.bak

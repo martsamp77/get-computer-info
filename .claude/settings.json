@@ -1,0 +1,19 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "f=$(grep -o '\"file_path\":\"[^\"]*\"' | head -1 | sed 's/.*:\"//;s/\"$//'); case \"$f\" in *.sh) command -v shellcheck >/dev/null 2>&1 && shellcheck --severity=warning \"$f\" ;; *.ps1) command -v pwsh >/dev/null 2>&1 && pwsh -NoProfile -Command \"Invoke-ScriptAnalyzer -Path '$f' -Severity Warning,Error\" ;; esac 2>/dev/null || true",
+            "statusMessage": "Running shellcheck..."
+          }
+        ]
+      }
+    ]
+  },
+  "enabledPlugins": {
+    "skill-creator@claude-plugins-official": true
+  }
+}

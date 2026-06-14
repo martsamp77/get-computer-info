@@ -1,0 +1,5 @@
+# Treat info/style notes as non-fatal; we still want warnings and errors.
+# Many printf format strings here intentionally contain literal backticks and
+# %s (Markdown), which trip SC2016; listing names with `ls` (SC2012) is
+# deliberate (names only, never contents).
+severity=warning
